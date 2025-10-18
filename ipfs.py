@@ -1,12 +1,13 @@
 import requests
 import json
+import io
 
 PINATA_API_KEY = "4b5abe769c0043a1c92c"
 PINATA_API_SECRET = "89d3118f2dd90d867235ec423cc94e274789dcc0add5c3cce4c5bdc9255c8e71"
 
 def pin_to_ipfs(data):
 	assert isinstance(data,dict), f"Error pin_to_ipfs expects a dictionary"
-	json_data = json.dumps(data)
+	json_bytes = io.BytesIO(json.dumps(data).encode("utf-8"))
 
 	headers = {
 		"pinata_api_key": PINATA_API_KEY,
@@ -14,7 +15,7 @@ def pin_to_ipfs(data):
 	}
 	
 	response = requests.post(
-		"https://api.pinata.cloud/pinning/pinFileToIPFS", files={"file": ("data.json", json_data)}, headers=headers
+		"https://api.pinata.cloud/pinning/pinFileToIPFS", files={"file": ("data.json", json_bytes)}, headers=headers
 	)
 
 	response.raise_for_status()
