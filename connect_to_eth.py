@@ -29,7 +29,6 @@ def connect_with_middleware(contract_json):
 	bnb_testnet_url = "https://data-seed-prebsc-1-s1.binance.org:8545/"
 	w3 = Web3(HTTPProvider(bnb_testnet_url))
 	assert w3.is_connected(), f"Failed to connect to provider at {bnb_testnet_url}"
-	return w3
 
 	# The second section requires you to inject middleware into your w3 object and
 	# create a contract object. Read more on the docs pages at https://web3py.readthedocs.io/en/stable/middleware.html
