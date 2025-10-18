@@ -1,35 +1,37 @@
 import requests
 import json
-import io
 
-PINATA_API_KEY = "8379873bc9ef96ac7cb4"
-PINATA_API_SECRET = "2df436f07c01efa36f3360ec95701e61e13ea80b12602719c267e0e309e82010"
+API_KEY = "b7c32404a94c4097b835726644af9699"
+API_SECRET = "Hgyr8VLSCdKN5dkDiOA4Ku9/386857VH365iF1+qQP0ig/p32AU8JQ"
 
 def pin_to_ipfs(data):
 	assert isinstance(data,dict), f"Error pin_to_ipfs expects a dictionary"
-	json_bytes = io.BytesIO(json.dumps(data).encode("utf-8"))
-
-	headers = {
-		"pinata_api_key": PINATA_API_KEY,
-		"pinata_secret_api_key": PINATA_API_SECRET
-	}
+	json_data = json.dumps(data)
+	
+	url = "https://ipfs.infura.io:5001/api/v0/add"
+	files = {"file": ("data.json", json_data)}
 	
 	response = requests.post(
-		"https://api.pinata.cloud/pinning/pinFileToIPFS", files={"file": ("data.json", json_bytes)}, headers=headers
-	)
+        url,
+        files=files,
+        auth=HTTPBasicAuth(PROJECT_ID, PROJECT_SECRET)
+    )
 
 	response.raise_for_status()
 	result = response.json()
 
 	cid = result["Hash"]
+	print(f"Uploaded to IPFS, CID: {cid}")
 	return cid
 
 
 def get_from_ipfs(cid,content_type="json"):
 	assert isinstance(cid,str), f"get_from_ipfs accepts a cid in the form of a string"
 
-	url = f"https://gateway.pinata.cloud/ipfs/{cid}"
-	response = requests.get(url)
+	response = requests.post(
+		"https://ipfs.infura.io:5001/api/v0/cat",
+        params={"arg": cid}
+    )
 
 	response.raise_for_status()
 	data = response.json()
