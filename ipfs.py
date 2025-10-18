@@ -20,7 +20,7 @@ def get_from_ipfs(cid,content_type="json"):
 	assert isinstance(cid,str), f"get_from_ipfs accepts a cid in the form of a string"
 
 	response = requests.post(
-		"https://ipfs.infura.io:5001/api/v0/cat", params={"arg": cid}}  
+		"https://ipfs.infura.io:5001/api/v0/cat", params={"arg": cid}
 	)
 
 	response.raise_for_status()
