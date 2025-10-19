@@ -14,6 +14,9 @@ def pin_to_ipfs(data):
 		"pinata_secret_api_key": PINATA_API_SECRET
 	}
 	
+	r = requests.get("https://api.pinata.cloud/data/testAuthentication", headers=headers)
+	print(r.status_code, r.text)
+	
 	response = requests.post(
 		"https://api.pinata.cloud/pinning/pinJSONToIPFS", files={"file": ("data.json", json_bytes)}, headers=headers
 	)
