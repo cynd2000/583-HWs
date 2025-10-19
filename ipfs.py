@@ -2,8 +2,8 @@ import requests
 import json
 import io
 
-PINATA_API_KEY = "8379873bc9ef96ac7cb4"
-PINATA_API_SECRET = "2df436f07c01efa36f3360ec95701e61e13ea80b12602719c267e0e309e82010"
+PINATA_API_KEY = "b1c8c5542c984e1c5ff4"
+PINATA_API_SECRET = "cb692f00a1d60f0979e796b51386d2371bd1ae21ae497659e7eca0d71bc38f9b"
 
 def pin_to_ipfs(data):
 	assert isinstance(data,dict), f"Error pin_to_ipfs expects a dictionary"
