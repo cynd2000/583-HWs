@@ -15,7 +15,7 @@ def pin_to_ipfs(data):
 	}
 	
 	response = requests.post(
-		"https://api.pinata.cloud/pinning/pinFileToIPFS", files={"file": ("data.json", json_bytes)}, headers=headers
+		"https://api.pinata.cloud/pinning/pinJSONToIPFS", files={"file": ("data.json", json_bytes)}, headers=headers
 	)
 
 	response.raise_for_status()
