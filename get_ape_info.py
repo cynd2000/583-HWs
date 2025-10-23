@@ -29,11 +29,12 @@ def get_ape_info(ape_id):
 
     # YOUR CODE HERE
     data['owner'] = contract.functions.ownerOf(ape_id).call()
-    data['image'] = contract.functions.tokenURI(ape_id).call()
-    ipfs_link = 'https://ipfs.io/ipfs/' + data['image'][7:]
+    tokenURI = contract.functions.tokenURI(ape_id).call()
+    ipfs_link = 'https://ipfs.io/ipfs/' + tokenURI['image'][7:]
 
     response = requests.get(ipfs_link)
     metadata = response.json()
+    data['image'] = metadata.get("image", "")
     data['eyes'] = next((t["value"] for t in metadata.get("attributes", []) if t["trait_type"] == "Eyes"), None)
 
     assert isinstance(data, dict), f'get_ape_info{ape_id} should return a dict'
