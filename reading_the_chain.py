@@ -55,7 +55,6 @@ def is_ordered_block(w3, block_num):
 	Conveniently, most type 2 transactions set the gasPrice field to be min( tx.maxPriorityFeePerGas + block.baseFeePerGas, tx.maxFeePerGas )
 	"""
 	block = w3.eth.get_block(block_num, full_transactions=True)
-	ordered = False
 	prev_fee = float('inf')
 	pri_fee = 0
 
@@ -67,14 +66,12 @@ def is_ordered_block(w3, block_num):
 			pri_fee = min(tx.maxPriorityFeePerGas, tx.maxFeePerGas - base_fee)
 	
 		if prev_fee < pri_fee:
-			ordered = False
-			return ordered 
+			return False 
 
 		else:
 			prev_fee = pri_fee
-			ordered = True
 
-	return ordered
+	return True
 
 
 def get_contract_values(contract, admin_address, owner_address):
