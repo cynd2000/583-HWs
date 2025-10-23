@@ -30,7 +30,7 @@ def get_ape_info(ape_id):
     # YOUR CODE HERE
     data['owner'] = contract.functions.ownerOf(ape_id).call()
     tokenURI = contract.functions.tokenURI(ape_id).call()
-    ipfs_link = 'https://ipfs.io/ipfs/' + tokenURI['image'][7:]
+    ipfs_link = 'https://ipfs.io/ipfs/' + tokenURI[7:]
 
     response = requests.get(ipfs_link)
     metadata = response.json()
