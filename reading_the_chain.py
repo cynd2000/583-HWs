@@ -61,7 +61,7 @@ def is_ordered_block(w3, block_num):
 
 	for tx in block.transactions:
 		if hasattr(tx, "gasPrice") and tx.gasPrice is not None:
-            pri_fee = tx.gasPrice
+			pri_fee = tx.gasPrice
         else:
             base_fee = getattr(block, "baseFeePerGas", 0)
             pri_fee = min(tx.maxPriorityFeePerGas, tx.maxFeePerGas - base_fee)
