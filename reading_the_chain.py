@@ -58,14 +58,13 @@ def is_ordered_block(w3, block_num):
 	ordered = False
 	prev_fee = float('inf')
 	pri_fee = 0
-	base_fee = block.baseFeePerGas
 
 	for tx in block.transactions:
-		tx_type = tx.type
-		if tx_type == "0x0" or tx_type == 0:
-			pri_fee = tx.gasPrice - base_fee
-		else:
-			pri_fee = min(tx.maxPriorityFeePerGas, tx.maxFeePerGas - base_fee)
+		if hasattr(tx, "gasPrice") and tx.gasPrice is not None:
+            pri_fee = tx.gasPrice
+        else:
+            base_fee = getattr(block, "baseFeePerGas", 0)
+            pri_fee = min(tx.maxPriorityFeePerGas, tx.maxFeePerGas - base_fee)
 	
 		if prev_fee < pri_fee:
 			ordered = False
