@@ -3,10 +3,6 @@ import eth_account
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
-"sign", that takes in a single message m, creates an eth account, 
-and uses the account’s key-pair to sign the message m. 
-This function should return the Ethereum account address that the signature is valid under, as well as the signature.
-
 def sign(m):
     w3 = Web3()
 
