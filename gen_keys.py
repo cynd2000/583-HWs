@@ -4,19 +4,6 @@ import eth_account
 from eth_account import Account
 import os
 
-
-Verifying signatures
-To verify a signature, you can use
-eth_account.Account.recover_message()
-or w3.eth.account.recover_message(), which has the same syntax
-Assignment
-Modify the file gen_keys.py to complete the function "get_keys()"
-The autograder will call get_keys() with a random challenge. Your function must sign the challenge, and return the signature as well as the address associated with the signature.
-The autograder will check two things:
-Does the signature verify using the address provided?
-Does the address provided have a nonzero token balance on both BSC and Avalanche?
-
-
 def sign_message(challenge, filename="secret_key.txt"):
     """
     challenge - byte string
