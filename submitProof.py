@@ -55,7 +55,7 @@ def generate_primes(num_primes):
     """
     primes_list = []
     num = 2
-    while len(primes) < n:
+    while len(primes_list) < n:
         if is_prime(num):
             primes_list.append(num)
         num += 1
@@ -91,11 +91,12 @@ def build_merkle(leaves):
 
     while len(current_level) > 1:
       next_level = []
-      if len(current_level) % 2 == 1:
-        current_level.append(current_level[-1])
+      level = current_level.copy()
+      if len(level) % 2 == 1:
+        level.append(level[-1])
 
-      for i in range(0, len(current_level), 2):
-        parent_hash = hash_pair(current_level[i], current_level[i+1])
+      for i in range(0, len(level), 2):
+        parent_hash = hash_pair(level[i], level[i+1])
         next_level.append(parent_hash)
       
       tree.append(next_level)
