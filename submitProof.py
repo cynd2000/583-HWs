@@ -158,7 +158,7 @@ def send_signed_msg(proof, random_leaf):
     acct = get_account()
     address, abi = get_contract_info(chain)
     w3 = connect_to(chain)
-    contract = w3.eth.contract(address=contract_address, abi=abi)
+    contract = w3.eth.contract(address=address, abi=abi)
 
     txn = contract.functions.claimPrime(random_leaf, proof).buildTransaction({
         'from': acct.address,
