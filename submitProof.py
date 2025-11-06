@@ -55,7 +55,7 @@ def generate_primes(num_primes):
     """
     primes_list = []
     num = 2
-    while len(primes_list) < n:
+    while len(primes_list) < num_primes:
         if is_prime(num):
             primes_list.append(num)
         num += 1
