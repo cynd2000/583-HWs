@@ -163,7 +163,7 @@ def send_signed_msg(proof, random_leaf):
     txn = contract.functions.submit(proof, random_leaf).build_transaction({
         'from': acct.address,
         'nonce': w3.eth.get_transaction_count(acct.address),
-        'gas': 36000,          
+        'gas': 80000,          
         'gasPrice': w3.eth.gas_price,
     })
 
