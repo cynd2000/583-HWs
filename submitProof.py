@@ -27,7 +27,7 @@ def merkle_assignment():
     tree = build_merkle(leaves)
 
     # Select a random leaf and create a proof for that leaf
-    random_leaf_index = random.randint(1, len(leaves)-1)  
+    random_leaf_index = random.randint(0, len(leaves)-1)  
     proof = prove_merkle(tree, random_leaf_index)
 
     # This is the same way the grader generates a challenge for sign_challenge()
