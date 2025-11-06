@@ -170,6 +170,11 @@ def send_signed_msg(proof, random_leaf):
     signed_txn = acct.sign_transaction(txn)
 
     tx_hash = w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+    print(f"✅ 交易已发送，哈希: {tx_hash.hex()}")
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    print(f"交易状态: {'成功' if receipt.status == 1 else '失败'}")
+    print(f"实际使用 gas: {receipt.gasUsed}")
+        
 
     return tx_hash.hex()
 
