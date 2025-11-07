@@ -32,21 +32,26 @@ contract Destination is AccessControl {
 
 	function unwrap(address _wrapped_token, address _recipient, uint256 _amount ) public {
 		//YOUR CODE HERE
+    address underlying_token = wrapped_tokens[_wrapped_token];
+    require(underlying_token != address(0), "Wrapped token not registered");
+
     BridgeToken bridgeToken = BridgeToken(_wrapped_token);
     require(bridgeToken.balanceOf(msg.sender) >= _amount, "Insufficient balance");
     bridgeToken.burnFrom(msg.sender, _amount);
-    emit Unwrap(wrapped_tokens[_wrapped_token], _wrapped_token, msg.sender, _recipient, _amount);
+
+    emit Unwrap(underlying_token, _wrapped_token, msg.sender, _recipient, _amount);
 	}
 
 	function createToken(address _underlying_token, string memory name, string memory symbol ) public onlyRole(CREATOR_ROLE) returns(address) {
 		//YOUR CODE HERE
     require(underlying_tokens[_underlying_token] == address(0), "Token already created");
     BridgeToken token = new BridgeToken(_underlying_token, name, symbol, address(this));
-    underlying_tokens[_underlying_token] = address(token);
-	wrapped_tokens[address(token)] = _underlying_token; 
-	tokens.push(address(token));
-    emit Creation(_underlying_token, address(token));
-    return address(token);
+    address tokenAddress = address(token);
+    underlying_tokens[_underlying_token] = tokenAddress;
+    wrapped_tokens[tokenAddress] = _underlying_token; 
+    tokens.push(tokenAddress);
+    emit Creation(_underlying_token, tokenAddress);
+    return tokenAddress;
 
 	}
 
