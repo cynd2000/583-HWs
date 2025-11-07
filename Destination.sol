@@ -47,8 +47,8 @@ contract Destination is AccessControl {
     require(underlying_tokens[_underlying_token] == address(0), "Token already created");
     BridgeToken token = new BridgeToken(_underlying_token, name, symbol, address(this));
     address tokenAddress = address(token);
-    underlying_tokens[_underlying_token] = tokenAddress;
-    wrapped_tokens[tokenAddress] = _underlying_token; 
+    underlying_tokens[_underlying_token] = _underlying_token;
+    wrapped_tokens[tokenAddress] = tokenAddress; 
     tokens.push(tokenAddress);
     emit Creation(_underlying_token, tokenAddress);
     return tokenAddress;
