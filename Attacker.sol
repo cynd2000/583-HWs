@@ -40,7 +40,7 @@ contract Attacker is AccessControl, IERC777Recipient {
 		//YOUR CODE TO START ATTACK GOES HERE
 		require(msg.value == amt, "Must send exact amount");
 		bank.deposit{value: amt}();
-		bank.claimAll()
+		bank.claimAll();
 	}
 
 	/*
