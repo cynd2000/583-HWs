@@ -52,10 +52,6 @@ contract Attacker is AccessControl, IERC777Recipient {
 		token.send(recipient,token.balanceOf(address(this)),"");
 	}
 
-
-tokensReceived - This function is required by the ERC777 token standard, and it’s what allows the reentrancy attack.
-You will need to complete the functions “attack” and “tokensReceived” – the others have been completed for you.
-
 	/*
 	   This is the function that gets called when the Bank contract sends MCITR tokens
 	*/
