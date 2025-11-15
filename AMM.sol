@@ -65,32 +65,22 @@ contract AMM is AccessControl{
 		require( invariant > 0, 'No liquidity' );
 		uint256 qtyA;
 		uint256 qtyB;
-		uint256 swapAmt;
-		uint256 buyAmount;
-		uint256 newA;
-		uint256 newB; 
 
 		//YOUR CODE HERE 
-		qtyA = ERC20(tokenA).balanceOf(address(this));
-		qtyB = ERC20(tokenB).balanceOf(address(this));
+		qtyA = IERC20(tokenA).balanceOf(address(this));
+		qtyB = IERC20(tokenB).balanceOf(address(this));
 
 		bool sellingA = (sellToken == tokenA);
 		address buyToken = sellingA ? tokenB : tokenA;
+		uint256 reserveIn = sellingA ? qtyA : qtyB;
+    uint256 reserveOut = sellingA ? qtyB : qtyA;
 
-		ERC20(sellToken).transferFrom(msg.sender, address(this), sellAmount);
-		swapAmt = sellAmount * (10000 - feebps) / 10000;
-
-		if (sellingA){
-			newA = qtyA + swapAmt;
-			newB = invariant / newA;
-			buyAmount = qtyB - newB;
-		}
-		else{
-			newB = qtyB + swapAmt;
-			newA = invariant / newB;
-			buyAmount = qtyA - newA;
-		}
-		ERC20(buyToken).transfer(msg.sender, buyAmount);
+		require(IERC20(sellToken).transferFrom(msg.sender, address(this), sellAmount), "TransferFrom failed");
+		uint256 amountInWithFee = sellAmount * (10000 - feebps);
+    uint256 numerator = amountInWithFee * reserveOut;
+    uint256 denominator = reserveIn * 10000 + amountInWithFee;
+    uint256 buyAmount = numerator / denominator;
+		require(IERC20(buyToken).transfer(msg.sender, buyAmount), "Transfer failed");
 
 		emit Swap(sellToken, buyToken, sellAmount, buyAmount);
 		uint256 new_invariant = ERC20(tokenA).balanceOf(address(this))*ERC20(tokenB).balanceOf(address(this));
