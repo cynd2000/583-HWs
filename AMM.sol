@@ -47,7 +47,8 @@ contract AMM is AccessControl{
 		require( amtA > 0 || amtB > 0, 'Cannot provide 0 liquidity' );
 		//YOUR CODE HERE
 		ERC20(tokenA).transferFrom(msg.sender, address(this), amtA);
-    ERC20(tokenB).transferFrom(msg.sender, address(this), amtB);
+    	ERC20(tokenB).transferFrom(msg.sender, address(this), amtB);
+		invariant = ERC20(tokenA).balanceOf(address(this)) * ERC20(tokenB).balanceOf(address(this));
 		emit LiquidityProvision( msg.sender, amtA, amtB );
 	}
 
