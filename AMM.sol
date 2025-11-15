@@ -73,13 +73,15 @@ contract AMM is AccessControl{
 		bool sellingA = (sellToken == tokenA);
 		address buyToken = sellingA ? tokenB : tokenA;
 		uint256 reserveIn = sellingA ? qtyA : qtyB;
-    uint256 reserveOut = sellingA ? qtyB : qtyA;
+    	uint256 reserveOut = sellingA ? qtyB : qtyA;
 
 		require(IERC20(sellToken).transferFrom(msg.sender, address(this), sellAmount), "TransferFrom failed");
-		uint256 amountInWithFee = sellAmount * (10000 - feebps);
-    uint256 numerator = amountInWithFee * reserveOut;
-    uint256 denominator = reserveIn * 10000 + amountInWithFee;
-    uint256 buyAmount = numerator / denominator;
+		
+		uint256 amountInWithFee = sellAmount.mul(1000 - feebps); // fee按0.3% = 3
+    	uint256 numerator = amountInWithFee.mul(reserveOut);
+    	uint256 denominator = reserveIn.mul(1000).add(amountInWithFee);
+    	uint256 buyAmount = numerator / denominator;
+
 		require(IERC20(buyToken).transfer(msg.sender, buyAmount), "Transfer failed");
 
 		emit Swap(sellToken, buyToken, sellAmount, buyAmount);
