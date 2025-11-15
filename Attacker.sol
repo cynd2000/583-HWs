@@ -30,7 +30,6 @@ contract Attacker is AccessControl, IERC777Recipient {
         _grantRole(ATTACKER_ROLE, bank.token.address );
 	}
 
-
 	/*
 	   The main attack function that should start the reentrancy attack
 	   amt is the amt of ETH the attacker will deposit initially to start the attack
