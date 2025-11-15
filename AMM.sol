@@ -77,9 +77,9 @@ contract AMM is AccessControl{
 
 		require(IERC20(sellToken).transferFrom(msg.sender, address(this), sellAmount), "TransferFrom failed");
 		
-		uint256 amountInWithFee = sellAmount * (1000 - feebps); 
+		uint256 amountInWithFee = sellAmount * (10000 - feebps); 
 	    uint256 numerator = amountInWithFee * reserveOut;
-	    uint256 denominator = reserveIn * 1000 + amountInWithFee;
+	    uint256 denominator = reserveIn * 10000 + amountInWithFee;
 	    uint256 buyAmount = numerator / denominator;
 
 		require(IERC20(buyToken).transfer(msg.sender, buyAmount), "Transfer failed");
