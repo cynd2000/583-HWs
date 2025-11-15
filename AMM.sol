@@ -58,50 +58,35 @@ contract AMM is AccessControl{
 
 		The contract must calculate buyAmount using the formula:
 	*/
-	function tradeTokens(address sellToken, uint256 sellAmount) public {
-        require(invariant > 0, "Invariant must be nonzero");
-        require(sellToken == tokenA || sellToken == tokenB, "Invalid token");
-        require(sellAmount > 0, "Cannot trade 0");
+	function tradeTokens( address sellToken, uint256 sellAmount ) public {
+		require( invariant > 0, 'Invariant must be nonzero' );
+		require( sellToken == tokenA || sellToken == tokenB, 'Invalid token' );
+		require( sellAmount > 0, 'Cannot trade 0' );
+		require( invariant > 0, 'No liquidity' );
+		uint256 qtyA;
+		uint256 qtyB;
 
-        // Get current reserves
-        uint256 reserveA = IERC20(tokenA).balanceOf(address(this));
-        uint256 reserveB = IERC20(tokenB).balanceOf(address(this));
+		//YOUR CODE HERE 
+		qtyA = IERC20(tokenA).balanceOf(address(this));
+		qtyB = IERC20(tokenB).balanceOf(address(this));
 
-        bool sellingA = (sellToken == tokenA);
-        address buyToken = sellingA ? tokenB : tokenA;
-        uint256 reserveIn = sellingA ? reserveA : reserveB;
-        uint256 reserveOut = sellingA ? reserveB : reserveA;
+		bool sellingA = (sellToken == tokenA);
+		address buyToken = sellingA ? tokenB : tokenA;
+		uint256 reserveIn = sellingA ? qtyA : qtyB;
+    uint256 reserveOut = sellingA ? qtyB : qtyA;
 
-        // Transfer sell tokens in
-        require(IERC20(sellToken).transferFrom(msg.sender, address(this), sellAmount), "TransferFrom failed");
+		require(IERC20(sellToken).transferFrom(msg.sender, address(this), sellAmount), "TransferFrom failed");
+		uint256 amountInWithFee = sellAmount * (10000 - feebps);
+    uint256 numerator = amountInWithFee * reserveOut;
+    uint256 denominator = reserveIn * 10000 + amountInWithFee;
+    uint256 buyAmount = numerator / denominator;
+		require(IERC20(buyToken).transfer(msg.sender, buyAmount), "Transfer failed");
 
-        // Calculate buyAmount with fee using Uniswap V2 formula
-        uint256 amountInWithFee = sellAmount * (10000 - feebps);
-        uint256 numerator = amountInWithFee * reserveOut;
-        uint256 denominator = reserveIn * 10000 + amountInWithFee;
-        uint256 buyAmount = numerator / denominator;
-
-        require(buyAmount > 0, "Insufficient output amount");
-
-        // Optimistically transfer buy tokens to user
-        require(IERC20(buyToken).transfer(msg.sender, buyAmount), "Transfer failed");
-
-        // New balances after trade
-        uint256 balanceA = IERC20(tokenA).balanceOf(address(this));
-        uint256 balanceB = IERC20(tokenB).balanceOf(address(this));
-
-        // Adjusted balances for fee (like Uniswap V2)
-        uint256 balanceAAdjusted = balanceA * 10000 - (sellingA ? sellAmount * (10000 - feebps) : 0);
-        uint256 balanceBAdjusted = balanceB * 10000 - (!sellingA ? sellAmount * (10000 - feebps) : 0);
-
-        // Ensure K invariant holds
-        require(balanceAAdjusted * balanceBAdjusted >= reserveA * reserveB * 10000 * 10000, "K");
-
-        // Update invariant
-        invariant = balanceA * balanceB;
-
-        emit Swap(sellToken, buyToken, sellAmount, buyAmount);
-    }
+		emit Swap(sellToken, buyToken, sellAmount, buyAmount);
+		uint256 new_invariant = ERC20(tokenA).balanceOf(address(this))*ERC20(tokenB).balanceOf(address(this));
+		require( new_invariant >= invariant, 'Bad trade' );
+		invariant = new_invariant;
+	}
 
 	/*
 		Use the ERC20 transfer function to send amtA of tokenA and amtB of tokenB to the target recipient
