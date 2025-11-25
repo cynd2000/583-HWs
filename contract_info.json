@@ -1,5 +1,5 @@
 {
-  "source_contract": {
+  "source": {
     "address": "0x3d4C6FAf97612E77F29F69E5caD9481b9a91E174",
     "deploy_tx": "7333fc9cac8e5a004694e65ef16598558add6792a3fce7a1b1687afdf482a8fe",
     "network": "avalanche",
@@ -407,7 +407,7 @@
       }
     ]
   },
-  "destination_contract": {
+  "destination": {
     "address": "0x44811764797988646C053399f878a4e349438907",
     "deploy_tx": "7ede04e4e15c51629616b7c0c2ad06336ca8febbaea270eece206454075ca1cd",
     "network": "bnb",
