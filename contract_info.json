@@ -4,7 +4,7 @@
     "chain_id": 43113,
     "bridge_address": "0x59604821F15a75228323f67226906A2397bB0ceF",
     "token_address": "0x08b6AcBE796c678fE970a6AfAAb5C42Fc7857927",
-    "bridge_abi": [
+    "abi": [
       {
         "inputs": [
           {
@@ -412,7 +412,7 @@
     "rpc": "https://data-seed-prebsc-1-s1.binance.org:8545/",
     "chain_id": 97,
     "bridge_address": "0x59604821F15a75228323f67226906A2397bB0ceF",
-    "bridge_abi": [
+    "abi": [
       {
         "inputs": [
           {
