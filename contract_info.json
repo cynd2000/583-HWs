@@ -407,7 +407,7 @@
       }
     ]
   },
-  "destination_contract": {
+  "destination": {
     "address": "0x89052018F69AB8383Ce821B2E1d08781cc571E5D",
     "deploy_tx": "e644965db58621beaf28112b604c8fb33098f7d063b126b6a7284fd08360e283",
     "network": "bnb",
