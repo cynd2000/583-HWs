@@ -55,10 +55,10 @@ def load_contract_info():
     加载contract_info_new.json文件
     """
     try:
-        with open("contract_info_new.json", "r") as f:
+        with open("contract_info.json", "r") as f:
             return json.load(f)
     except FileNotFoundError:
-        logger.error("❌ contract_info_new.json 文件不存在")
+        logger.error("❌ contract_info.json 文件不存在")
         return None
 
 def load_erc20_mapping():
