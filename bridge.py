@@ -38,19 +38,10 @@ def get_contract_info(chain, contract_info):
 
 
 def scan_blocks(chain, contract_info="contract_info.json"):
-    """
-        chain - (string) should be either "source" or "destination"
-        Scan the last 5 blocks of the source and destination chains
-        Look for 'Deposit' events on the source chain and 'Unwrap' events on the destination chain
-        When Deposit events are found on the source chain, call the 'wrap' function the destination chain
-        When Unwrap events are found on the destination chain, call the 'withdraw' function on the source chain
-    """
     print(f"🔍 Scanning blocks on {chain} chain using {contract_info}")
     
-    # 连接到对应链
     w3 = connect_to(chain)
     
-    # 获取合约信息
     contract_data = get_contract_info(chain, contract_info)
     if not contract_data:
         print(f"❌ Failed to get contract info for {chain}")
@@ -59,18 +50,16 @@ def scan_blocks(chain, contract_info="contract_info.json"):
     contract_address = contract_data['address']
     contract_abi = contract_data['abi']
     
-    # 创建合约实例
     contract = w3.eth.contract(address=contract_address, abi=contract_abi)
     
-    # 获取当前区块
     current_block = w3.eth.block_number
-    from_block = max(0, current_block - 5)  # 扫描最近5个区块
+    # 大大增加扫描范围
+    from_block = max(0, current_block - 100)  # 扫描最近100个区块
     to_block = current_block
     
     print(f"   Contract: {contract_address}")
-    print(f"   Scanning blocks: {from_block} to {to_block}")
+    print(f"   Scanning blocks: {from_block} to {to_block} (total: {to_block - from_block + 1} blocks)")
     
-    # 根据链选择要监听的事件
     if chain == 'source':
         event_name = 'Deposit'
     elif chain == 'destination':
@@ -82,55 +71,79 @@ def scan_blocks(chain, contract_info="contract_info.json"):
     all_events = []
     
     try:
-        # 获取事件对象
         event_obj = getattr(contract.events, event_name)
         
-        # 简单扫描，避免RPC限制
+        # 方法1：尝试批量扫描
         try:
-            # 尝试一次性扫描所有区块
-            event_filter = event_obj.create_filter(
-                from_block=from_block,
-                to_block=to_block,
-                argument_filters={}
-            )
-            events = event_filter.get_all_entries()
+            print("   Method 1: Bulk scan...")
+            events = event_obj.get_logs(fromBlock=from_block, toBlock=to_block)
+            print(f"   Found {len(events)} events via bulk scan")
             
             for ev in events:
+                args_dict = dict(ev['args'])
                 formatted_event = {
                     'blockNumber': ev['blockNumber'],
                     'transactionHash': ev['transactionHash'].hex(),
                     'address': ev['address'],
-                    'args': dict(ev['args']),
+                    'args': args_dict,
                     'event': event_name,
                     'chain': chain
                 }
                 all_events.append(formatted_event)
-            
-            print(f"✅ Found {len(all_events)} {event_name} events")
-            
+                
         except Exception as e:
-            # 如果批量扫描失败，跳过扫描
-            print(f"⚠️  Could not scan events (RPC limit): {e}")
-            print("   Returning empty event list")
-            return []
+            print(f"   Bulk scan failed: {e}")
+            
+            # 方法2：逐个区块扫描
+            print("   Method 2: Scanning block by block...")
+            for block_num in range(from_block, to_block + 1):
+                try:
+                    block_events = event_obj.get_logs(fromBlock=block_num, toBlock=block_num)
+                    for ev in block_events:
+                        args_dict = dict(ev['args'])
+                        formatted_event = {
+                            'blockNumber': ev['blockNumber'],
+                            'transactionHash': ev['transactionHash'].hex(),
+                            'address': ev['address'],
+                            'args': args_dict,
+                            'event': event_name,
+                            'chain': chain
+                        }
+                        all_events.append(formatted_event)
+                except:
+                    continue
         
-        # 处理事件（调用相应的函数）
+        print(f"✅ Total found: {len(all_events)} {event_name} events")
+        
+        # 按区块号排序
+        all_events.sort(key=lambda x: x['blockNumber'])
+        
+        # 打印事件详情
+        for i, event in enumerate(all_events):
+            print(f"   Event {i+1}: Block {event['blockNumber']}, TX: {event['transactionHash'][:20]}...")
+            if event_name == 'Deposit':
+                print(f"     Token: {event['args'].get('token')}, Amount: {event['args'].get('amount')}")
+            elif event_name == 'Unwrap':
+                print(f"     Token: {event['args'].get('underlying_token')}, Amount: {event['args'].get('amount')}")
+        
+        # 处理事件
         if all_events:
             process_events(chain, all_events, contract_info)
         
     except Exception as e:
         print(f"❌ Error in scan_blocks: {e}")
-        # 返回空列表以避免影响测试
+        import traceback
+        traceback.print_exc()
         return []
     
     return all_events
-
 
 def process_events(chain, events, contract_info="contract_info.json"):
     """
     处理扫描到的事件，调用相应的跨链函数
     """
     if not events:
+        print("   No events to process")
         return
     
     print(f"🎯 Processing {len(events)} events from {chain} chain")
@@ -172,58 +185,77 @@ def process_events(chain, events, contract_info="contract_info.json"):
             next(reader)  # 跳过标题行
             for row in reader:
                 if len(row) >= 2:
-                    test_tokens.append(row[1].strip())
-    except:
-        print("❌ Could not read test tokens from erc20s.csv")
-        return
+                    token_addr = row[1].strip()
+                    if token_addr.startswith('0x'):
+                        test_tokens.append(token_addr.lower())
+        print(f"   Loaded {len(test_tokens)} test tokens")
+    except Exception as e:
+        print(f"❌ Could not read test tokens from erc20s.csv: {e}")
+        test_tokens = []
     
     # 处理每个事件
     for event in events:
         if chain == 'source' and event['event'] == 'Deposit':
-            # 新的Unwrap事件参数解析（更灵活）
-            token_address = None
-            if 'underlying_token' in event['args']:
-                token_address = event['args']['underlying_token']
-            elif 'wrapped_token' in event['args']:
-                token_address = event['args']['wrapped_token']
-            elif 'token' in event['args']:
-                token_address = event['args']['token']
+            # 处理Deposit事件
+            args = event['args']
+            print(f"   Processing Deposit event: {args}")
             
-            # 更好的调试信息
-            print(f"   Available args: {event['args'].keys()}")
+            # 获取参数
+            if 'token' not in args or 'recipient' not in args or 'amount' not in args:
+                print(f"   Missing required parameters in Deposit event")
+                continue
+            
+            token_address = args['token']
+            recipient = args['recipient']
+            amount = args['amount']
+            
+            # 转换为小写比较
+            token_lower = token_address.lower()
             
             # 只处理测试代币
-            if token_address not in test_tokens:
+            if token_lower not in test_tokens:
                 print(f"   Skipping non-test token: {token_address}")
                 continue
                 
-            print(f"   Processing Deposit for test token: {token_address}")
+            print(f"   ✅ Processing Deposit for test token: {token_address}")
+            print(f"   Recipient: {recipient}, Amount: {amount}")
+            
+            # 调用handle_deposit_event函数
             handle_deposit_event(event, destination_w3, destination_contract, private_key)
         
         elif chain == 'destination' and event['event'] == 'Unwrap':
             # 解析Unwrap事件
-            if 'underlying_token' in event['args']:
-                token_address = event['args']['underlying_token']
-            elif 'wrapped_token' in event['args']:
-                token_address = event['args']['wrapped_token']
-                # 尝试获取底层代币
-                try:
-                    underlying_token = destination_contract.functions.underlying_tokens(token_address).call()
-                    if underlying_token != "0x0000000000000000000000000000000000000000":
-                        token_address = underlying_token
-                except:
-                    pass
-            else:
-                print("   Cannot determine token address from Unwrap event")
+            args = event['args']
+            print(f"   Processing Unwrap event: {args}")
+            
+            # 获取参数 - 根据你的ABI
+            required_keys = ['underlying_token', 'to', 'amount']
+            missing_keys = [key for key in required_keys if key not in args]
+            if missing_keys:
+                print(f"   Missing keys in Unwrap event: {missing_keys}")
+                print(f"   Available keys: {args.keys()}")
                 continue
             
+            token_address = args['underlying_token']
+            recipient = args['to']
+            amount = args['amount']
+            
+            # 转换为小写比较
+            token_lower = token_address.lower()
+            
             # 只处理测试代币
-            if token_address not in test_tokens:
+            if token_lower not in test_tokens:
                 print(f"   Skipping non-test token: {token_address}")
                 continue
                 
-            print(f"   Processing Unwrap for test token: {token_address}")
+            print(f"   ✅ Processing Unwrap for test token: {token_address}")
+            print(f"   Recipient: {recipient}, Amount: {amount}")
+            
+            # 调用handle_unwrap_event函数
             handle_unwrap_event(event, source_w3, source_contract, private_key)
+        
+        else:
+            print(f"   Skipping event type: {event['event']} on {chain} chain")
 
 def get_warden_private_key():
     """
