@@ -85,70 +85,73 @@ def scan_blocks(chain, contract_info="contract_info.json"):
         # 获取事件对象
         event_obj = getattr(contract.events, event_name)
         
-        # 使用与Assignment IV兼容的方法扫描事件
-        # 分批扫描，每次最多30个区块
-        batch_size = 30
-        current_scan_block = from_block
+        # 读取测试代币地址
+        test_tokens = []
+        try:
+            with open("erc20s.csv", "r") as f:
+                reader = csv.reader(f)
+                next(reader)  # 跳过标题行
+                for row in reader:
+                    if len(row) >= 2:
+                        test_tokens.append(row[1].strip())
+        except:
+            print("   Warning: Could not read erc20s.csv")
         
-        while current_scan_block <= to_block:
-            batch_end = min(current_scan_block + batch_size - 1, to_block)
-            
-            if batch_end == current_scan_block:
-                print(f"   Scanning block {current_scan_block}...")
-            else:
-                print(f"   Scanning blocks {current_scan_block}-{batch_end}...")
-            
+        print(f"   Test tokens to watch: {test_tokens}")
+        
+        # 分批扫描
+        for block_num in range(from_block, to_block + 1):
             try:
-                # 使用create_filter方法（与Assignment IV兼容）
+                # 为每个块创建事件过滤器
                 event_filter = event_obj.create_filter(
-                    from_block=current_scan_block,
-                    to_block=batch_end,
+                    from_block=block_num,
+                    to_block=block_num,
                     argument_filters={}
                 )
                 events = event_filter.get_all_entries()
                 
                 for ev in events:
-                    formatted_event = {
-                        'blockNumber': ev['blockNumber'],
-                        'transactionHash': ev['transactionHash'].hex(),
-                        'address': ev['address'],
-                        'args': dict(ev['args']),
-                        'event': event_name,
-                        'chain': chain
-                    }
-                    all_events.append(formatted_event)
-                
-                if events:
-                    print(f"      Found {len(events)} events")
+                    # 只处理测试代币的事件
+                    token_address = ev['args'].get('token') or ev['args'].get('underlying_token') or ev['args'].get('wrapped_token')
+                    
+                    # 检查是否是测试代币
+                    if token_address in test_tokens:
+                        formatted_event = {
+                            'blockNumber': ev['blockNumber'],
+                            'transactionHash': ev['transactionHash'].hex(),
+                            'address': ev['address'],
+                            'args': dict(ev['args']),
+                            'event': event_name,
+                            'chain': chain
+                        }
+                        all_events.append(formatted_event)
+                        print(f"   Block {block_num}: Found test event for token {token_address}")
+                    else:
+                        print(f"   Block {block_num}: Ignoring non-test token event")
                 
             except Exception as e:
-                print(f"      Error scanning blocks {current_scan_block}-{batch_end}: {e}")
-                # 如果失败，尝试更小的批次
-                if batch_size > 5:
-                    batch_size = batch_size // 2
-                    continue
-            
-            current_scan_block = batch_end + 1
+                print(f"   Block {block_num}: Error - {e}")
         
-        print(f"✅ Found {len(all_events)} {event_name} events in total")
+        print(f"✅ Found {len(all_events)} test {event_name} events")
         
         # 处理事件（调用相应的函数）
-        process_events(chain, all_events, contract_info)
+        if all_events:
+            process_events(chain, all_events, contract_info)
         
     except Exception as e:
         print(f"❌ Error scanning events: {e}")
-        import traceback
-        traceback.print_exc()
     
     return all_events
 
-    
+
 def process_events(chain, events, contract_info="contract_info.json"):
     """
     处理扫描到的事件，调用相应的跨链函数
     """
     if not events:
         return
+    
+    print(f"🎯 Processing {len(events)} events from {chain} chain")
     
     # 加载合约信息
     source_contract_data = get_contract_info('source', contract_info)
@@ -173,23 +176,62 @@ def process_events(chain, events, contract_info="contract_info.json"):
         abi=destination_contract_data['abi']
     )
     
-    # 获取私钥（在实际使用中应该从安全的地方获取）
-    # 这里简化为从环境变量或配置文件获取
+    # 获取私钥
     private_key = get_warden_private_key()
     if not private_key:
         print("❌ No warden private key found")
         return
     
+    # 读取测试代币地址
+    test_tokens = []
+    try:
+        with open("erc20s.csv", "r") as f:
+            reader = csv.reader(f)
+            next(reader)  # 跳过标题行
+            for row in reader:
+                if len(row) >= 2:
+                    test_tokens.append(row[1].strip())
+    except:
+        print("❌ Could not read test tokens from erc20s.csv")
+        return
+    
     # 处理每个事件
     for event in events:
         if chain == 'source' and event['event'] == 'Deposit':
-            print(f"🎯 Processing Deposit event on source chain")
+            token_address = event['args']['token']
+            
+            # 只处理测试代币
+            if token_address not in test_tokens:
+                print(f"   Skipping non-test token: {token_address}")
+                continue
+                
+            print(f"   Processing Deposit for test token: {token_address}")
             handle_deposit_event(event, destination_w3, destination_contract, private_key)
         
         elif chain == 'destination' and event['event'] == 'Unwrap':
-            print(f"🎯 Processing Unwrap event on destination chain")
+            # 解析Unwrap事件
+            if 'underlying_token' in event['args']:
+                token_address = event['args']['underlying_token']
+            elif 'wrapped_token' in event['args']:
+                token_address = event['args']['wrapped_token']
+                # 尝试获取底层代币
+                try:
+                    underlying_token = destination_contract.functions.underlying_tokens(token_address).call()
+                    if underlying_token != "0x0000000000000000000000000000000000000000":
+                        token_address = underlying_token
+                except:
+                    pass
+            else:
+                print("   Cannot determine token address from Unwrap event")
+                continue
+            
+            # 只处理测试代币
+            if token_address not in test_tokens:
+                print(f"   Skipping non-test token: {token_address}")
+                continue
+                
+            print(f"   Processing Unwrap for test token: {token_address}")
             handle_unwrap_event(event, source_w3, source_contract, private_key)
-
 
 def get_warden_private_key():
     """
