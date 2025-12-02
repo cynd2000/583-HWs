@@ -225,8 +225,6 @@ def process_events(chain, events, contract_info="contract_info.json"):
             print(f"   Processing Unwrap for test token: {token_address}")
             handle_unwrap_event(event, source_w3, source_contract, private_key)
 
-            
-
 def get_warden_private_key():
     """
     获取warden的私钥
