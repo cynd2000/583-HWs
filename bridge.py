@@ -1,195 +1,405 @@
+# bridge.py
 from web3 import Web3
 from web3.providers.rpc import HTTPProvider
-from web3.middleware import ExtraDataToPOAMiddleware #Necessary for POA chains
+from web3.middleware import ExtraDataToPOAMiddleware
 from datetime import datetime
 import json
 import pandas as pd
+import time
+import csv
+from web3.exceptions import TransactionNotFound
+import logging
 
+# 设置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 def connect_to(chain):
-    if chain == 'source':  # The source contract chain is avax
-        api_url = f"https://api.avax-test.network/ext/bc/C/rpc" #AVAX C-chain testnet
-
-    if chain == 'destination':  # The destination contract chain is bsc
-        api_url = f"https://data-seed-prebsc-1-s1.binance.org:8545/" #BSC testnet
-
-    if chain in ['source','destination']:
+    """
+    连接到指定的区块链网络
+    """
+    if chain == 'source':  # Avalanche
+        api_url = "https://api.avax-test.network/ext/bc/C/rpc"
         w3 = Web3(Web3.HTTPProvider(api_url))
-        # inject the poa compatibility middleware to the innermost layer
+        # Avalanche需要POA中间件
         w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+        
+    elif chain == 'destination':  # BNB
+        api_url = "https://data-seed-prebsc-1-s1.binance.org:8545/"
+        w3 = Web3(Web3.HTTPProvider(api_url))
+        w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+    else:
+        raise ValueError(f"不支持的链: {chain}")
+    
     return w3
-
 
 def get_contract_info(chain, contract_info):
     """
-        Load the contract_info file into a dictionary
-        This function is used by the autograder and will likely be useful to you
+    从contract_info字典中获取指定链的合约信息
+    """
+    if chain == 'source':
+        return {
+            'address': contract_info['source']['address'],
+            'abi': contract_info['source']['abi']
+        }
+    elif chain == 'destination':
+        return {
+            'address': contract_info['destination']['address'],
+            'abi': contract_info['destination']['abi']
+        }
+    else:
+        raise ValueError(f"不支持的链: {chain}")
+
+def load_contract_info():
+    """
+    加载contract_info_new.json文件
     """
     try:
-        with open(contract_info, 'r')  as f:
-            contracts = json.load(f)
+        with open("contract_info_new.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error("❌ contract_info_new.json 文件不存在")
+        return None
+
+def load_erc20_mapping():
+    """
+    加载erc20s.csv文件，创建代币映射
+    """
+    try:
+        with open("erc20s.csv", "r") as f:
+            reader = csv.reader(f)
+            next(reader)  # 跳过标题行
+            
+            mapping = {'avax': [], 'bsc': []}
+            for row in reader:
+                if len(row) >= 2:
+                    chain = row[0].strip().lower()
+                    address = row[1].strip()
+                    if chain in mapping:
+                        mapping[chain].append(address)
+            
+            logger.info(f"📄 加载代币映射: {len(mapping['avax'])}个Avalanche, {len(mapping['bsc'])}个BNB")
+            return mapping
+    except FileNotFoundError:
+        logger.error("❌ erc20s.csv 文件不存在")
+        return None
+
+def get_private_key():
+    """
+    从用户输入获取私钥
+    """
+    private_key = input("请输入warden的私钥 (0x开头): ").strip()
+    if not private_key or not private_key.startswith('0x'):
+        logger.error("❌ 无效的私钥格式")
+        return None
+    return private_key
+
+def get_contract_instance(w3, address, abi):
+    """
+    创建合约实例
+    """
+    return w3.eth.contract(address=address, abi=abi)
+
+def parse_deposit_event_from_receipt(source_contract, receipt, tx):
+    """
+    从交易收据中解析Deposit事件
+    """
+    try:
+        # 获取Deposit事件接口
+        deposit_event = source_contract.events.Deposit()
+        
+        # 处理所有日志，找到Deposit事件
+        for log in receipt.logs:
+            try:
+                # 尝试解析为Deposit事件
+                event_data = deposit_event.process_log(log)
+                
+                # 验证事件参数
+                if 'args' in event_data and 'token' in event_data['args']:
+                    logger.info(f"✅ 成功解析Deposit事件")
+                    return event_data
+                    
+            except Exception as e:
+                # 不是Deposit事件，继续下一个
+                continue
+        
+        logger.warning("⚠️ 未找到Deposit事件")
+        return None
+        
     except Exception as e:
-        print( f"Failed to read contract info\nPlease contact your instructor\n{e}" )
-        return 0
-    return contracts[chain]
+        logger.error(f"❌ 解析事件失败: {e}")
+        return None
 
-
-
-def scan_blocks(chain, contract_info="contract_info.json"):
+def handle_deposit_event(event, destination_w3, destination_contract, private_key, erc20_mapping):
     """
-        chain - (string) should be either "source" or "destination"
-        Scan the last 5 blocks of the source and destination chains
-        Look for 'Deposit' events on the source chain and 'Unwrap' events on the destination chain
-        When Deposit events are found on the source chain, call the 'wrap' function the destination chain
-        When Unwrap events are found on the destination chain, call the 'withdraw' function on the source chain
+    处理Deposit事件的回调函数
     """
+    try:
+        token_address = event['args']['token']
+        recipient = event['args']['recipient']
+        amount = event['args']['amount']
+        
+        logger.info(f"🎯 处理Deposit事件:")
+        logger.info(f"   代币: {token_address}")
+        logger.info(f"   接收者: {recipient}")
+        logger.info(f"   数量: {amount}")
+        
+        # 获取账户
+        account = destination_w3.eth.account.from_key(private_key)
+        
+        # 检查代币是否在erc20_mapping中
+        if token_address not in erc20_mapping.get('avax', []):
+            logger.warning(f"⚠️ 代币 {token_address} 不在erc20s.csv中")
+            return
+        
+        # 检查wrapped token是否存在
+        try:
+            wrapped_token = destination_contract.functions.wrapped_tokens(token_address).call()
+            
+            if wrapped_token == "0x0000000000000000000000000000000000000000":
+                logger.error(f"❌ 代币 {token_address} 尚未在Destination合约中创建wrapped token")
+                logger.info(f"💡 请先在Destination合约调用createToken()创建包装代币")
+                return
+            
+            logger.info(f"   找到wrapped token: {wrapped_token}")
+            
+            # 构建wrap交易
+            nonce = destination_w3.eth.get_transaction_count(account.address)
+            gas_price = destination_w3.eth.gas_price
+            
+            # 构建交易
+            wrap_txn = destination_contract.functions.wrap(
+                token_address,  # _underlying_token
+                recipient,      # _recipient
+                amount          # _amount
+            ).build_transaction({
+                'from': account.address,
+                'nonce': nonce,
+                'gasPrice': gas_price,
+                'gas': 200000  # 固定gas，避免估算失败
+            })
+            
+            # 签名并发送
+            signed_txn = destination_w3.eth.account.sign_transaction(wrap_txn, private_key)
+            tx_hash = destination_w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+            
+            logger.info(f"📤 Wrap交易已发送: {tx_hash.hex()}")
+            
+            # 等待确认
+            logger.info("⏳ 等待交易确认...")
+            receipt = destination_w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            
+            if receipt.status == 1:
+                logger.info("✅ Wrap交易成功!")
+                
+                # 查找Wrap事件
+                wrap_event = destination_contract.events.Wrap()
+                for log in receipt.logs:
+                    try:
+                        event_data = wrap_event.process_log(log)
+                        if event_data:
+                            logger.info(f"🎉 成功mint {amount} 包装代币给 {recipient}")
+                            break
+                    except:
+                        continue
+            else:
+                logger.error("❌ Wrap交易失败")
+                
+        except Exception as e:
+            logger.error(f"❌ 处理Deposit事件失败: {e}")
+            
+    except Exception as e:
+        logger.error(f"❌ 处理事件时发生错误: {e}")
 
-    # This is different from Bridge IV where chain was "avax" or "bsc"
-    if chain not in ['source','destination']:
-        print( f"Invalid chain: {chain}" )
-        return 0
+def scan_blocks(w3, contract, event_name, from_block, to_block):
+    """
+    扫描指定范围内的区块以查找事件
+    """
+    logger.info(f"🔍 扫描区块 {from_block} 到 {to_block} 的 {event_name} 事件")
     
-        # 加载合约信息
-    contracts = get_contract_info(chain, contract_info)
-    if not contracts:
-        return 0
+    all_events = []
     
-    # 获取私钥
-    warden_private_key = contracts['warden']['private_key']
+    try:
+        # 获取事件对象
+        event_obj = getattr(contract.events, event_name)()
+        
+        # 分批扫描
+        batch_size = 500
+        current_block = from_block
+        
+        while current_block <= to_block:
+            end_block = min(current_block + batch_size - 1, to_block)
+            
+            try:
+                # 获取事件日志
+                events = event_obj.get_logs(
+                    fromBlock=current_block,
+                    toBlock=end_block
+                )
+                
+                if events:
+                    logger.info(f"   区块 {current_block}-{end_block}: 找到 {len(events)} 个事件")
+                    all_events.extend(events)
+                else:
+                    logger.debug(f"   区块 {current_block}-{end_block}: 无事件")
+                    
+            except Exception as e:
+                logger.warning(f"   区块 {current_block}-{end_block} 扫描失败: {e}")
+                # 减少批次大小重试
+                if batch_size > 100:
+                    batch_size = batch_size // 2
+                    continue
+            
+            current_block = end_block + 1
+        
+        logger.info(f"✅ 总计找到 {len(all_events)} 个 {event_name} 事件")
+        return all_events
+        
+    except Exception as e:
+        logger.error(f"❌ 扫描事件失败: {e}")
+        return []
+
+def listen_for_events(source_w3, source_contract, callback_function, erc20_mapping):
+    """
+    监听Source合约的事件
+    """
+    logger.info("👂 开始监听Source合约事件...")
     
-    # 连接到两个网络
+    # 记录已处理的交易
+    processed_txs = set()
+    last_block = source_w3.eth.block_number
+    
+    logger.info(f"📊 起始区块: {last_block}")
+    
+    while True:
+        try:
+            current_block = source_w3.eth.block_number
+            
+            if current_block > last_block:
+                logger.info(f"🔄 发现 {current_block - last_block} 个新区块")
+                
+                # 扫描新区块中的事件
+                events = scan_blocks(
+                    source_w3,
+                    source_contract,
+                    'Deposit',
+                    last_block + 1,
+                    current_block
+                )
+                
+                # 处理事件
+                for event in events:
+                    tx_hash = event['transactionHash'].hex()
+                    
+                    if tx_hash not in processed_txs:
+                        logger.info(f"📥 处理新事件: {tx_hash}")
+                        callback_function(event)
+                        processed_txs.add(tx_hash)
+                
+                last_block = current_block
+            else:
+                # 显示监听状态
+                current_time = time.strftime("%H:%M:%S")
+                print(f"⏰ {current_time} - 监听中... 区块: {current_block}", end='\r')
+            
+            time.sleep(5)  # 5秒检查一次
+            
+        except KeyboardInterrupt:
+            logger.info("\n🛑 停止监听")
+            break
+        except Exception as e:
+            logger.error(f"⚠️ 监听错误: {e}")
+            time.sleep(5)
+
+def main():
+    """
+    主函数 - 启动跨链桥
+    """
+    print("🌉 启动跨链桥...")
+    print("="*50)
+    
+    # 1. 加载配置
+    contract_info = load_contract_info()
+    if not contract_info:
+        return
+    
+    erc20_mapping = load_erc20_mapping()
+    if not erc20_mapping:
+        return
+    
+    private_key = get_private_key()
+    if not private_key:
+        return
+    
+    # 2. 连接到网络
+    print("\n🔗 连接到区块链网络...")
     source_w3 = connect_to('source')
     destination_w3 = connect_to('destination')
     
-    # 创建账户
-    warden_account = source_w3.eth.account.from_key(warden_private_key)
+    print(f"✅ Avalanche连接: {source_w3.is_connected()}")
+    print(f"✅ BNB连接: {destination_w3.is_connected()}")
     
-    # 获取合约地址和ABI
-    source_address = contracts['source']['address']
-    source_abi = contracts['source']['abi']
+    # 3. 获取账户
+    account = source_w3.eth.account.from_key(private_key)
+    print(f"👤 Warden地址: {account.address}")
     
-    destination_address = contracts['destination']['address']
-    destination_abi = contracts['destination']['abi']
+    # 4. 获取合约信息
+    source_info = get_contract_info('source', contract_info)
+    destination_info = get_contract_info('destination', contract_info)
     
-    # 创建合约实例
-    source_contract = source_w3.eth.contract(address=source_address, abi=source_abi)
-    destination_contract = destination_w3.eth.contract(address=destination_address, abi=destination_abi)
+    # 5. 创建合约实例
+    source_contract = get_contract_instance(
+        source_w3, 
+        source_info['address'], 
+        source_info['abi']
+    )
     
-    # 扫描最近5个区块
-    latest_block_source = source_w3.eth.block_number
-    latest_block_destination = destination_w3.eth.block_number
+    destination_contract = get_contract_instance(
+        destination_w3,
+        destination_info['address'],
+        destination_info['abi']
+    )
     
-    start_block_source = max(0, latest_block_source - 5)
-    start_block_destination = max(0, latest_block_destination - 5)
+    print(f"📄 Source合约地址: {source_info['address']}")
+    print(f"📄 Destination合约地址: {destination_info['address']}")
     
-    print(f"扫描源链区块 {start_block_source} 到 {latest_block_source}")
-    print(f"扫描目标链区块 {start_block_destination} 到 {latest_block_destination}")
+    # 6. 先扫描历史事件（最近100个区块）
+    print("\n📜 扫描历史事件...")
+    historical_events = scan_blocks(
+        source_w3,
+        source_contract,
+        'Deposit',
+        max(0, source_w3.eth.block_number - 100),
+        source_w3.eth.block_number
+    )
     
-    # 1. 监听源链的Deposit事件，然后在目标链调用wrap
-    deposit_events_found = 0
-    unwrap_events_found = 0
-    
-    # 扫描源链的Deposit事件（基于listener.py的逻辑）
-    try:
-        if latest_block_source - start_block_source < 30:
-            event_filter = source_contract.events.Deposit.create_filter(
-                from_block=start_block_source, 
-                to_block=latest_block_source
+    if historical_events:
+        print(f"📦 找到 {len(historical_events)} 个历史事件")
+        for event in historical_events:
+            handle_deposit_event(
+                event, 
+                destination_w3, 
+                destination_contract, 
+                private_key, 
+                erc20_mapping
             )
-            deposit_events = event_filter.get_all_entries()
-        else:
-            deposit_events = []
-            for block_num in range(start_block_source, latest_block_source + 1):
-                event_filter = source_contract.events.Deposit.create_filter(
-                    from_block=block_num, 
-                    to_block=block_num
-                )
-                deposit_events.extend(event_filter.get_all_entries())
-        
-        deposit_events_found = len(deposit_events)
-        print(f"找到 {deposit_events_found} 个Deposit事件")
-        
-        for event in deposit_events:
-            print(f"发现Deposit事件: token={event.args.token}, recipient={event.args.recipient}, amount={event.args.amount}")
-            
-            # 在目标链调用wrap函数
-            try:
-                wrap_tx = destination_contract.functions.wrap(
-                    event.args.token,       # _underlying_token
-                    event.args.recipient,   # _recipient  
-                    event.args.amount       # _amount
-                ).build_transaction({
-                    'from': warden_account.address,
-                    'nonce': destination_w3.eth.get_transaction_count(warden_account.address),
-                    'gas': 200000,
-                    'gasPrice': destination_w3.eth.gas_price
-                })
-                
-                signed_wrap_tx = destination_w3.eth.account.sign_transaction(wrap_tx, warden_private_key)
-                wrap_tx_hash = destination_w3.eth.send_raw_transaction(signed_wrap_tx.raw_transaction)
-                wrap_receipt = destination_w3.eth.wait_for_transaction_receipt(wrap_tx_hash)
-                
-                if wrap_receipt.status == 1:
-                    print(f"✅ 成功在目标链调用wrap: {wrap_tx_hash.hex()}")
-                else:
-                    print(f"❌ wrap调用失败")
-                    
-            except Exception as e:
-                print(f"❌ 调用wrap失败: {e}")
-                
-    except Exception as e:
-        print(f"❌ 获取Deposit事件失败: {e}")
     
-    # 2. 监听目标链的Unwrap事件，然后在源链调用withdraw
-    try:
-        if latest_block_destination - start_block_destination < 30:
-            event_filter = destination_contract.events.Unwrap.create_filter(
-                from_block=start_block_destination, 
-                to_block=latest_block_destination
-            )
-            unwrap_events = event_filter.get_all_entries()
-        else:
-            unwrap_events = []
-            for block_num in range(start_block_destination, latest_block_destination + 1):
-                event_filter = destination_contract.events.Unwrap.create_filter(
-                    from_block=block_num, 
-                    to_block=block_num
-                )
-                unwrap_events.extend(event_filter.get_all_entries())
-        
-        unwrap_events_found = len(unwrap_events)
-        print(f"找到 {unwrap_events_found} 个Unwrap事件")
-        
-        for event in unwrap_events:
-            print(f"发现Unwrap事件: underlying_token={event.args.underlying_token}, to={event.args.to}, amount={event.args.amount}")
-            
-            # 在源链调用withdraw函数
-            try:
-                withdraw_tx = source_contract.functions.withdraw(
-                    event.args.underlying_token,  # _token
-                    event.args.to,                # _recipient
-                    event.args.amount             # _amount
-                ).build_transaction({
-                    'from': warden_account.address,
-                    'nonce': source_w3.eth.get_transaction_count(warden_account.address),
-                    'gas': 200000,
-                    'gasPrice': source_w3.eth.gas_price
-                })
-                
-                signed_withdraw_tx = source_w3.eth.account.sign_transaction(withdraw_tx, warden_private_key)
-                withdraw_tx_hash = source_w3.eth.send_raw_transaction(signed_withdraw_tx.raw_transaction)
-                withdraw_receipt = source_w3.eth.wait_for_transaction_receipt(withdraw_tx_hash)
-                
-                if withdraw_receipt.status == 1:
-                    print(f"✅ 成功在源链调用withdraw: {withdraw_tx_hash.hex()}")
-                else:
-                    print(f"❌ withdraw调用失败")
-                    
-            except Exception as e:
-                print(f"❌ 调用withdraw失败: {e}")
-                
-    except Exception as e:
-        print(f"❌ 获取Unwrap事件失败: {e}")
+    # 7. 设置事件处理回调
+    def deposit_callback(event):
+        handle_deposit_event(
+            event, 
+            destination_w3, 
+            destination_contract, 
+            private_key, 
+            erc20_mapping
+        )
     
-    print(f"处理完成: {deposit_events_found} 个Deposit事件, {unwrap_events_found} 个Unwrap事件")
-    return 1
+    # 8. 开始监听事件
+    print("\n" + "="*50)
+    print("🚀 跨链桥已启动!")
+    print("="*50)
+    
+    listen_for_events(source_w3, source_contract, deposit_callback, erc20_mapping)
+
+if __name__ == "__main__":
+    main()
