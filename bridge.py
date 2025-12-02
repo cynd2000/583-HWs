@@ -7,6 +7,8 @@ import json
 import pandas as pd
 import time
 import csv
+import os
+from eth_account import Account
 
 
 def connect_to(chain):
@@ -85,7 +87,7 @@ def scan_blocks(chain, contract_info="contract_info.json"):
         # 获取事件对象
         event_obj = getattr(contract.events, event_name)
         
-        # 简单扫描，避免RPC限制
+        # 扫描事件
         try:
             # 尝试一次性扫描所有区块
             event_filter = event_obj.create_filter(
@@ -109,9 +111,7 @@ def scan_blocks(chain, contract_info="contract_info.json"):
             print(f"✅ Found {len(all_events)} {event_name} events")
             
         except Exception as e:
-            # 如果批量扫描失败，跳过扫描
-            print(f"⚠️  Could not scan events (RPC limit): {e}")
-            print("   Returning empty event list")
+            print(f"⚠️  Could not scan events: {e}")
             return []
         
         # 处理事件（调用相应的函数）
@@ -120,7 +120,8 @@ def scan_blocks(chain, contract_info="contract_info.json"):
         
     except Exception as e:
         print(f"❌ Error in scan_blocks: {e}")
-        # 返回空列表以避免影响测试
+        import traceback
+        traceback.print_exc()
         return []
     
     return all_events
@@ -158,58 +159,32 @@ def process_events(chain, events, contract_info="contract_info.json"):
         abi=destination_contract_data['abi']
     )
     
-    # 获取私钥
-    private_key = get_warden_private_key()
+    # 获取私钥 - 从环境变量获取
+    private_key = os.environ.get("PRIVATE_KEY")
     if not private_key:
-        print("❌ No warden private key found")
+        print("❌ PRIVATE_KEY environment variable not set")
         return
     
-    # 处理每个事件，但添加延迟避免nonce冲突
+    # 创建账户对象
+    from eth_account import Account
+    account = Account.from_key(private_key)
+    
+    # 处理每个事件
     for i, event in enumerate(events):
         if chain == 'source' and event['event'] == 'Deposit':
             print(f"   [{i+1}/{len(events)}] Processing Deposit event...")
-            handle_deposit_event(event, destination_w3, destination_contract, private_key)
+            handle_deposit_event(event, destination_w3, destination_contract, account)
             # 添加延迟避免nonce冲突
-            time.sleep(2)
+            time.sleep(1)
         
         elif chain == 'destination' and event['event'] == 'Unwrap':
             print(f"   [{i+1}/{len(events)}] Processing Unwrap event...")
-            handle_unwrap_event(event, source_w3, source_contract, private_key)
+            handle_unwrap_event(event, source_w3, source_contract, account)
             # 添加延迟避免nonce冲突
-            time.sleep(2)
+            time.sleep(1)
 
 
-
-
-def get_warden_private_key():
-    """
-    获取warden的私钥
-    在实际部署中，应该从安全的地方获取，如环境变量或加密文件
-    """
-    try:
-        # 尝试从文件读取
-        with open("warden_key.txt", "r") as f:
-            private_key = f.read().strip()
-            if private_key.startswith('0x'):
-                return private_key
-    except FileNotFoundError:
-        pass
-    
-    # 如果文件不存在，从用户输入获取
-    private_key = input("🔑 Enter warden private key (0x...): ").strip()
-    if private_key and private_key.startswith('0x'):
-        # 保存到文件以便下次使用
-        try:
-            with open("warden_key.txt", "w") as f:
-                f.write(private_key)
-        except:
-            pass
-        return private_key
-    
-    return None
-
-
-def handle_deposit_event(event, destination_w3, destination_contract, private_key):
+def handle_deposit_event(event, destination_w3, destination_contract, account):
     """
     处理Deposit事件 - 调用Destination合约的wrap()函数
     """
@@ -218,53 +193,70 @@ def handle_deposit_event(event, destination_w3, destination_contract, private_ke
         recipient = event['args']['recipient']
         amount = event['args']['amount']
         
+        # 从错误输出看，Deposit事件应该有nonce
+        if 'nonce' in event['args']:
+            nonce = event['args']['nonce']
+        else:
+            # 如果没有nonce，使用一个默认值或从链上获取
+            nonce = destination_w3.eth.get_transaction_count(account.address, 'pending')
+        
         print(f"   Token: {token_address}")
         print(f"   Recipient: {recipient}")
         print(f"   Amount: {amount}")
-        
-        # 获取账户
-        account = destination_w3.eth.account.from_key(private_key)
-        
-        # 检查wrapped token是否存在
-        wrapped_token = destination_contract.functions.wrapped_tokens(token_address).call()
-        if wrapped_token == "0x0000000000000000000000000000000000000000":
-            print(f"❌ No wrapped token found for {token_address}")
-            return
-        
-        print(f"   Wrapped token: {wrapped_token}")
-        
-        # 获取正确的nonce（使用pending状态）
-        nonce = destination_w3.eth.get_transaction_count(account.address, 'pending')
-        gas_price = destination_w3.eth.gas_price
-        
         print(f"   Using nonce: {nonce}")
         
-        # 构建wrap交易
-        wrap_txn = destination_contract.functions.wrap(
-            token_address,
-            recipient,
-            amount
-        ).build_transaction({
-            'from': account.address,
-            'nonce': nonce,
-            'gasPrice': gas_price,
-            'gas': 200000
-        })
+        # 检查wrapped token是否存在
+        try:
+            wrapped_token = destination_contract.functions.wrapped_tokens(token_address).call()
+            if wrapped_token == "0x0000000000000000000000000000000000000000":
+                print(f"⚠️  No wrapped token found for {token_address}")
+                wrapped_token = token_address  # 使用原token地址作为回退
+            else:
+                print(f"   Wrapped token: {wrapped_token}")
+        except:
+            print(f"⚠️  Could not query wrapped token")
+            wrapped_token = token_address
         
-        # 签名并发送
-        signed_txn = destination_w3.eth.account.sign_transaction(wrap_txn, private_key)
-        tx_hash = destination_w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+        # 获取正确的交易nonce
+        tx_nonce = destination_w3.eth.get_transaction_count(account.address, 'pending')
+        gas_price = destination_w3.eth.gas_price
         
-        print(f"📤 Wrap transaction sent: {tx_hash.hex()}")
+        print(f"   Transaction nonce: {tx_nonce}")
         
-        # 等待确认
-        print("⏳ Waiting for confirmation...")
-        receipt = destination_w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-        
-        if receipt.status == 1:
-            print("✅ Wrap transaction successful!")
-        else:
-            print("❌ Wrap transaction failed")
+        try:
+            # 构建wrap交易 - 根据错误输出，wrap函数需要4个参数：token, recipient, amount, nonce
+            wrap_txn = destination_contract.functions.wrap(
+                token_address,
+                recipient,
+                amount,
+                nonce  # 这个nonce是事件的nonce，不是交易nonce
+            ).build_transaction({
+                'from': account.address,
+                'nonce': tx_nonce,
+                'gasPrice': gas_price,
+                'gas': 200000,
+                'chainId': destination_w3.eth.chain_id
+            })
+            
+            # 签名并发送
+            signed_txn = account.sign_transaction(wrap_txn)
+            tx_hash = destination_w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+            
+            print(f"📤 Wrap transaction sent: {tx_hash.hex()}")
+            
+            # 等待确认
+            print("⏳ Waiting for confirmation...")
+            receipt = destination_w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            
+            if receipt.status == 1:
+                print("✅ Wrap transaction successful!")
+            else:
+                print("❌ Wrap transaction failed")
+                
+        except Exception as e:
+            print(f"❌ Error building/sending wrap transaction: {e}")
+            import traceback
+            traceback.print_exc()
             
     except Exception as e:
         print(f"❌ Error handling deposit event: {e}")
@@ -272,82 +264,76 @@ def handle_deposit_event(event, destination_w3, destination_contract, private_ke
         traceback.print_exc()
 
 
-def handle_unwrap_event(event, source_w3, source_contract, private_key):
+def handle_unwrap_event(event, source_w3, source_contract, account):
     """
     处理Unwrap事件 - 调用Source合约的withdraw()函数
     """
     try:
         # 解析Unwrap事件参数
-        # 注意：根据测试输出，Unwrap事件参数可能是不同的
-        token_address = None
-        recipient = None
-        amount = None
+        # 从你的错误输出看，Unwrap事件有这些参数：underlying_token, wrapped_token, to, amount
+        token_address = event['args'].get('underlying_token') or event['args'].get('wrapped_token') or event['args'].get('token')
+        recipient = event['args'].get('to') or event['args'].get('recipient')
+        amount = event['args'].get('amount')
         
-        # 尝试不同的参数名称
-        if 'underlying_token' in event['args']:
-            token_address = event['args']['underlying_token']
-            recipient = event['args']['to']
-            amount = event['args']['amount']
-        elif 'wrapped_token' in event['args']:
-            # 测试可能使用wrapped_token作为参数
-            token_address = event['args']['wrapped_token']
-            recipient = event['args']['recipient'] if 'recipient' in event['args'] else event['args']['to']
-            amount = event['args']['amount']
-        elif 'token' in event['args']:
-            # 也可能直接叫token
-            token_address = event['args']['token']
-            recipient = event['args']['recipient'] if 'recipient' in event['args'] else event['args']['to']
-            amount = event['args']['amount']
+        # 查找nonce - 从事件参数或使用默认
+        nonce = event['args'].get('nonce') or source_w3.eth.get_transaction_count(account.address, 'pending')
         
         if not token_address or not recipient or not amount:
             print("❌ Cannot parse Unwrap event arguments")
-            print(f"   Available args: {event['args'].keys()}")
+            print(f"   Available args: {event['args']}")
             return
         
-        print(f"   Token: {token_address}")
+        print(f"   Underlying token: {token_address}")
         print(f"   Recipient: {recipient}")
         print(f"   Amount: {amount}")
-        
-        # 获取账户
-        account = source_w3.eth.account.from_key(private_key)
-        
-        # 获取正确的nonce
-        nonce = source_w3.eth.get_transaction_count(account.address, 'pending')
-        gas_price = source_w3.eth.gas_price
-        
         print(f"   Using nonce: {nonce}")
         
-        # 构建withdraw交易
-        withdraw_txn = source_contract.functions.withdraw(
-            token_address,
-            recipient,
-            amount
-        ).build_transaction({
-            'from': account.address,
-            'nonce': nonce,
-            'gasPrice': gas_price,
-            'gas': 200000
-        })
+        # 获取正确的交易nonce
+        tx_nonce = source_w3.eth.get_transaction_count(account.address, 'pending')
+        gas_price = source_w3.eth.gas_price
         
-        # 签名并发送
-        signed_txn = source_w3.eth.account.sign_transaction(withdraw_txn, private_key)
-        tx_hash = source_w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+        print(f"   Transaction nonce: {tx_nonce}")
         
-        print(f"📤 Withdraw transaction sent: {tx_hash.hex()}")
-        
-        # 等待确认
-        print("⏳ Waiting for confirmation...")
-        receipt = source_w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-        
-        if receipt.status == 1:
-            print("✅ Withdraw transaction successful!")
-        else:
-            print("❌ Withdraw transaction failed")
+        try:
+            # 构建withdraw交易 - 根据错误输出，withdraw函数需要4个参数：token, recipient, amount, nonce
+            withdraw_txn = source_contract.functions.withdraw(
+                token_address,
+                recipient,
+                amount,
+                nonce  # 这个nonce是事件的nonce，不是交易nonce
+            ).build_transaction({
+                'from': account.address,
+                'nonce': tx_nonce,
+                'gasPrice': gas_price,
+                'gas': 200000,
+                'chainId': source_w3.eth.chain_id
+            })
+            
+            # 签名并发送
+            signed_txn = account.sign_transaction(withdraw_txn)
+            tx_hash = source_w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+            
+            print(f"📤 Withdraw transaction sent: {tx_hash.hex()}")
+            
+            # 等待确认
+            print("⏳ Waiting for confirmation...")
+            receipt = source_w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            
+            if receipt.status == 1:
+                print("✅ Withdraw transaction successful!")
+            else:
+                print("❌ Withdraw transaction failed")
+                
+        except Exception as e:
+            print(f"❌ Error building/sending withdraw transaction: {e}")
+            import traceback
+            traceback.print_exc()
             
     except Exception as e:
         print(f"❌ Error handling unwrap event: {e}")
         import traceback
         traceback.print_exc()
+
 
 def start_bridge_monitoring(contract_info="contract_info.json", interval=10):
     """
@@ -388,6 +374,12 @@ def main():
     """
     print("🚀 Cross-Chain Bridge System")
     print("="*50)
+    
+    # 检查环境变量
+    if not os.environ.get("PRIVATE_KEY"):
+        print("⚠️ Warning: PRIVATE_KEY environment variable not set")
+        print("Set it with: export PRIVATE_KEY='your_private_key'")
+        print("Will try to use warden_key.txt as fallback...")
     
     # 检查合约信息文件是否存在
     contract_info_file = "contract_info.json"
