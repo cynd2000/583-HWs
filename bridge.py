@@ -211,41 +211,74 @@ def handle_deposit_event(event, destination_w3, destination_contract, private_ke
     except Exception as e:
         logger.error(f"❌ 处理事件时发生错误: {e}")
 
-def scan_blocks(w3, contract, event_name, from_block, to_block):
+def scan_blocks(chain, event_name, from_block, to_block):
     """
     扫描指定范围内的区块以查找事件
-    """
-    logger.info(f"🔍 扫描区块 {from_block} 到 {to_block} 的 {event_name} 事件")
     
-    all_events = []
+    Args:
+        chain (str): 'source' 或 'destination'
+        event_name (str): 事件名称，如'Deposit'或'Unwrap'
+        from_block (int): 起始区块号
+        to_block (int): 结束区块号
+    
+    Returns:
+        list: 事件列表
+    """
+    logger.info(f"🔍 扫描{chain}链的{event_name}事件，区块 {from_block} 到 {to_block}")
     
     try:
-        # 获取事件对象
-        event_obj = getattr(contract.events, event_name)()
+        # 连接到对应链
+        w3 = connect_to(chain)
         
-        # 分批扫描
-        batch_size = 500
+        # 加载合约信息
+        contract_info = load_contract_info()
+        if not contract_info:
+            return []
+        
+        # 获取合约信息
+        if chain == 'source':
+            contract_data = get_contract_info('source', contract_info)
+        elif chain == 'destination':
+            contract_data = get_contract_info('destination', contract_info)
+        else:
+            logger.error(f"❌ 不支持的链: {chain}")
+            return []
+        
+        # 创建合约实例
+        contract = get_contract_instance(w3, contract_data['address'], contract_data['abi'])
+        
+        # 获取事件对象
+        try:
+            event_obj = getattr(contract.events, event_name)()
+        except AttributeError:
+            logger.error(f"❌ 合约没有 {event_name} 事件")
+            return []
+        
+        all_events = []
+        
+        # 分批扫描，避免请求太大
+        batch_size = 1000
         current_block = from_block
         
         while current_block <= to_block:
             end_block = min(current_block + batch_size - 1, to_block)
             
+            logger.debug(f"   扫描区块 {current_block} - {end_block}...")
+            
             try:
-                # 获取事件日志
+                # 使用get_logs获取事件
                 events = event_obj.get_logs(
                     fromBlock=current_block,
                     toBlock=end_block
                 )
                 
                 if events:
-                    logger.info(f"   区块 {current_block}-{end_block}: 找到 {len(events)} 个事件")
+                    logger.info(f"     找到 {len(events)} 个事件")
                     all_events.extend(events)
-                else:
-                    logger.debug(f"   区块 {current_block}-{end_block}: 无事件")
-                    
-            except Exception as e:
-                logger.warning(f"   区块 {current_block}-{end_block} 扫描失败: {e}")
-                # 减少批次大小重试
+                
+            except Exception as batch_error:
+                logger.warning(f"     区块 {current_block}-{end_block} 扫描失败: {batch_error}")
+                # 如果批量失败，尝试更小的批次
                 if batch_size > 100:
                     batch_size = batch_size // 2
                     continue
@@ -253,12 +286,22 @@ def scan_blocks(w3, contract, event_name, from_block, to_block):
             current_block = end_block + 1
         
         logger.info(f"✅ 总计找到 {len(all_events)} 个 {event_name} 事件")
-        return all_events
+        
+        # 格式化返回结果
+        formatted_events = []
+        for event in all_events:
+            formatted_event = {
+                'blockNumber': event['blockNumber'],
+                'transactionHash': event['transactionHash'].hex(),
+                'args': dict(event['args'])
+            }
+            formatted_events.append(formatted_event)
+        
+        return formatted_events
         
     except Exception as e:
         logger.error(f"❌ 扫描事件失败: {e}")
         return []
-
 def listen_for_events(source_w3, source_contract, callback_function, erc20_mapping):
     """
     监听Source合约的事件
