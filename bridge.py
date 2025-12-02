@@ -202,27 +202,44 @@ def process_events(chain, events, contract_info="contract_info.json"):
         
         elif chain == 'destination' and event['event'] == 'Unwrap':
             # 解析Unwrap事件
-            if 'underlying_token' in event['args']:
-                token_address = event['args']['underlying_token']
-            elif 'wrapped_token' in event['args']:
-                token_address = event['args']['wrapped_token']
-                # 尝试获取底层代币
-                try:
-                    underlying_token = destination_contract.functions.underlying_tokens(token_address).call()
-                    if underlying_token != "0x0000000000000000000000000000000000000000":
-                        token_address = underlying_token
-                except:
-                    pass
+            args = event['args']
+            
+            # 调试输出
+            print(f"   Debug - Unwrap event args: {args}")
+            print(f"   Debug - Available keys: {args.keys()}")
+            
+            # 直接获取底层代币地址
+            if 'underlying_token' in args:
+                token_address = args['underlying_token']
+                print(f"   Using underlying_token from event: {token_address}")
             else:
-                print("   Cannot determine token address from Unwrap event")
+                print("   Cannot find underlying_token in Unwrap event")
                 continue
+            
+            # 获取接收者
+            if 'to' in args:
+                recipient = args['to']
+            elif 'recipient' in args:  # 可能叫recipient
+                recipient = args['recipient']
+            else:
+                print("   Cannot determine recipient from Unwrap event")
+                continue
+            
+            # 获取金额
+            if 'amount' in args:
+                amount = args['amount']
+            else:
+                print("   Cannot determine amount from Unwrap event")
+                continue
+            
+            print(f"   Processing Unwrap - Token: {token_address}, Recipient: {recipient}, Amount: {amount}")
             
             # 只处理测试代币
             if token_address not in test_tokens:
                 print(f"   Skipping non-test token: {token_address}")
                 continue
                 
-            print(f"   Processing Unwrap for test token: {token_address}")
+            # 调用handle_unwrap_event函数
             handle_unwrap_event(event, source_w3, source_contract, private_key)
 
 def get_warden_private_key():
@@ -318,18 +335,32 @@ def handle_unwrap_event(event, source_w3, source_contract, private_key):
     """
     try:
         # 解析Unwrap事件参数
-        # 根据您的合约ABI，参数可能是: underlying_token, wrapped_token, frm, to, amount
-        if 'underlying_token' in event['args']:
-            token_address = event['args']['underlying_token']
-            recipient = event['args']['to']
-            amount = event['args']['amount']
-        elif 'wrapped_token' in event['args']:
-            # 需要查询底层代币，这里简化处理
-            token_address = event['args']['wrapped_token']
-            recipient = event['args']['recipient'] if 'recipient' in event['args'] else event['args']['to']
-            amount = event['args']['amount']
+        args = event['args']
+        print(f"   Debug - Unwrap event args received: {args}")
+        
+        # 根据你的ABI，Unwrap事件的参数是: underlying_token, wrapped_token, frm, to, amount
+        # 我们需要的是：token_address = underlying_token, recipient = to
+        
+        if 'underlying_token' in args:
+            token_address = args['underlying_token']
+            print(f"   Found underlying_token: {token_address}")
         else:
-            print("❌ Cannot parse Unwrap event arguments")
+            print("❌ Cannot find underlying_token in Unwrap event")
+            print(f"   Available keys: {args.keys()}")
+            return
+        
+        if 'to' in args:
+            recipient = args['to']
+            print(f"   Found recipient (to): {recipient}")
+        else:
+            print("❌ Cannot find 'to' address in Unwrap event")
+            return
+        
+        if 'amount' in args:
+            amount = args['amount']
+            print(f"   Found amount: {amount}")
+        else:
+            print("❌ Cannot find amount in Unwrap event")
             return
         
         print(f"   Token: {token_address}")
