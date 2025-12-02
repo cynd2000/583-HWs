@@ -211,7 +211,7 @@ def handle_deposit_event(event, destination_w3, destination_contract, private_ke
     except Exception as e:
         logger.error(f"❌ 处理事件时发生错误: {e}")
 
-def scan_blocks(chain, event_name, from_block, to_block):
+def scan_blocks(chain, event_name, from_block=None, to_block=None):
     """
     扫描指定范围内的区块以查找事件
     
