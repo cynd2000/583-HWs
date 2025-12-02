@@ -302,6 +302,7 @@ def scan_blocks(chain, event_name, from_block, to_block):
     except Exception as e:
         logger.error(f"❌ 扫描事件失败: {e}")
         return []
+        
 def listen_for_events(source_w3, source_contract, callback_function, erc20_mapping):
     """
     监听Source合约的事件
@@ -321,18 +322,17 @@ def listen_for_events(source_w3, source_contract, callback_function, erc20_mappi
             if current_block > last_block:
                 logger.info(f"🔄 发现 {current_block - last_block} 个新区块")
                 
-                # 扫描新区块中的事件
+                # 扫描新区块中的事件 - 使用正确的参数
                 events = scan_blocks(
-                    source_w3,
-                    source_contract,
-                    'Deposit',
-                    last_block + 1,
-                    current_block
+                    'source',           # chain参数
+                    'Deposit',          # event_name参数
+                    last_block + 1,     # from_block参数
+                    current_block       # to_block参数
                 )
                 
                 # 处理事件
                 for event in events:
-                    tx_hash = event['transactionHash'].hex()
+                    tx_hash = event['transactionHash']
                     
                     if tx_hash not in processed_txs:
                         logger.info(f"📥 处理新事件: {tx_hash}")
@@ -353,7 +353,7 @@ def listen_for_events(source_w3, source_contract, callback_function, erc20_mappi
         except Exception as e:
             logger.error(f"⚠️ 监听错误: {e}")
             time.sleep(5)
-
+            
 def main():
     """
     主函数 - 启动跨链桥
@@ -409,11 +409,10 @@ def main():
     # 6. 先扫描历史事件（最近100个区块）
     print("\n📜 扫描历史事件...")
     historical_events = scan_blocks(
-        source_w3,
-        source_contract,
-        'Deposit',
-        max(0, source_w3.eth.block_number - 100),
-        source_w3.eth.block_number
+        'source',           # chain参数
+        'Deposit',          # event_name参数
+        max(0, source_w3.eth.block_number - 100),  # from_block参数
+        source_w3.eth.block_number                 # to_block参数
     )
     
     if historical_events:
@@ -443,6 +442,6 @@ def main():
     print("="*50)
     
     listen_for_events(source_w3, source_contract, deposit_callback, erc20_mapping)
-
+    
 if __name__ == "__main__":
     main()
